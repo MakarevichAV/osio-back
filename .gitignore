@@ -1,0 +1,17 @@
+# Node modules
+node_modules/
+
+# Логи
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Среда
+.env
+.DS_Store
+
+# Папки сборки
+dist/
+build/
