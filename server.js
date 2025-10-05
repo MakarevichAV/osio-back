@@ -90,10 +90,13 @@ app.get("/api/holding/:start/:length", async (req, res) => {
 // real-time через WebSocket
 setInterval(async () => {
     try {
-        // читаем первые 4 регистра (пример)
-        const data = await client.readHoldingRegisters(0, 4);
+        // читаем первые 10 регистр
+        const data = await client.readHoldingRegisters(0, 10);
 
-        io.emit("plc-data", { values: data.data });
+        // конвертируем регистры 4 и 5 в float
+        const tempSP = registersToFloat(data.data[4], data.data[5]);
+
+        io.emit("plc-data", { values: data.data, tempSP });
     } catch (err) {
         console.error("PLC read error:", err.message);
     }
@@ -121,6 +124,14 @@ function floatToRegisters(value) {
     const buf = Buffer.alloc(4);
     buf.writeFloatBE(value, 0);
     return [buf.readUInt16BE(2), buf.readUInt16BE(0)]; // little-endian
+}
+
+function registersToFloat(low, high) {
+    const buffer = Buffer.alloc(4);
+    // порядок слов зависит от ПЛК! попробуй оба варианта ↓
+    buffer.writeUInt16BE(high, 0);
+    buffer.writeUInt16BE(low, 2);
+    return buffer.readFloatBE(0);
 }
 
 async function sendSetToPLC(setName, recipeData) {
@@ -167,15 +178,7 @@ async function sendSetToPLC(setName, recipeData) {
     }
 }
 
-app.post("/api/sendSet/:setName", async (req, res) => {
-    const { setName } = req.params;
-    try {
-        await sendSetToPLC(setName, recipesJson); // recipesJson хранится в памяти сервера
-        res.json({ status: "ok" });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+
 
 server.listen(3001, () => console.log("Backend + WebSocket running on port 3001"));
 
@@ -189,4 +192,30 @@ server.listen(3001, () => console.log("Backend + WebSocket running on port 3001"
 app.get("/api/recipes", (req, res) => {
     if (!recipesJson) return res.status(500).json({ error: "Recipes not loaded" });
     res.json(recipesJson);
+});
+
+app.post("/api/set-setpoint", async (req, res) => {
+    const { value } = req.body;
+    try {
+        // если INT16
+        await client.writeRegister(5, value);
+
+        // если REAL(float32):
+        // const [low, high] = floatToModbusRegisters(value);
+        // await client.writeRegisters(5, [low, high]);
+
+        res.json({ status: "ok" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post("/api/sendSet/:setName", async (req, res) => {
+    const { setName } = req.params;
+    try {
+        await sendSetToPLC(setName, recipesJson); // recipesJson хранится в памяти сервера
+        res.json({ status: "ok" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
