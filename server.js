@@ -9,6 +9,7 @@ const { parse } = require("csv-parse");
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -94,8 +95,8 @@ setInterval(async () => {
         const data = await client.readHoldingRegisters(0, 10);
 
         // конвертируем регистры 4 и 5 в float
-        const tempSP = registersToFloat(data.data[4], data.data[5]);
-
+        // const tempSP = registersToFloat(data.data[6], data.data[7]);
+        const tempSP = data.data[6];
         io.emit("plc-data", { values: data.data, tempSP });
     } catch (err) {
         console.error("PLC read error:", err.message);
@@ -178,15 +179,11 @@ async function sendSetToPLC(setName, recipeData) {
     }
 }
 
-
-
 server.listen(3001, () => console.log("Backend + WebSocket running on port 3001"));
-
 
 // const holdingData = await client.readHoldingRegisters(0, 4);
 // const coilsData = await client.readCoils(0, 8);
 // const inputsData = await client.readDiscreteInputs(0, 8);
-
 
 // getting parsed RecipeData.csv for client
 app.get("/api/recipes", (req, res) => {
@@ -194,11 +191,20 @@ app.get("/api/recipes", (req, res) => {
     res.json(recipesJson);
 });
 
+app.post( "/api/start-heating",async (req, res) => {
+    try {
+        await client.writeRegister(3, 1);
+        res.json({ status: "ok" });
+    } catch(err) {
+        res.status(500).json({error: err.message});
+    }
+} );
+
 app.post("/api/set-setpoint", async (req, res) => {
     const { value } = req.body;
     try {
         // если INT16
-        await client.writeRegister(5, value);
+        await client.writeRegister(6, value);
 
         // если REAL(float32):
         // const [low, high] = floatToModbusRegisters(value);
@@ -219,3 +225,4 @@ app.post("/api/sendSet/:setName", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
