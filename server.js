@@ -215,3 +215,21 @@ app.post("/api/sendSet/:setName", async (req, res) => {
     }
 });
 
+app.post("/api/login", (req, res) => {
+    const { user, password } = req.body;
+    console.log("Login attempt:", user, password);
+
+    if (user === "admin" && password === "admin") {
+        return res.json({
+            success: true,
+            data: { userType: "Admin", userName: "Admin" },
+        });
+    }
+
+    // если данные неверны
+    return res.status(401).json({
+        success: false,
+        error: "Invalid username or password",
+    });
+});
+
