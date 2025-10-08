@@ -155,16 +155,6 @@ async function sendSetToPLC(setName, recipeData) {
             else if (row.ElementName.startsWith("Idle")) idle.push(int16ToUInt16(scaleValue(val, "Idle")));
         }
 
-        // console.log(`\n=== Отладка перед отправкой сета "${setName}" ===`);
-        // console.log("Angles:", angles, "длина:", angles.length);
-        // console.table(angles);
-        //
-        // console.log("DeltaXRegisters:", deltaXRegisters, "длина:", deltaXRegisters.length / 2, "(float32 элементов)");
-        // console.log("Z_StartRegisters:", zStartRegisters, "длина:", zStartRegisters.length / 2);
-        // console.log("Z_EndRegisters:", zEndRegisters, "длина:", zEndRegisters.length / 2);
-        // console.log("RPMRegisters:", rpmRegisters, "длина:", rpmRegisters.length / 2);
-        // console.log("Idle:", idle, "длина:", idle.length);
-
         // Запись в PLC
         await client.writeRegisters(100, angles);          // Angle1..30 (INT16)
         await client.writeRegisters(130, deltaXRegisters); // DeltaX1..30 (float32 → 2 регистра на элемент)
@@ -181,10 +171,6 @@ async function sendSetToPLC(setName, recipeData) {
 
 server.listen(3001, () => console.log("Backend + WebSocket running on port 3001"));
 
-// const holdingData = await client.readHoldingRegisters(0, 4);
-// const coilsData = await client.readCoils(0, 8);
-// const inputsData = await client.readDiscreteInputs(0, 8);
-
 // getting parsed RecipeData.csv for client
 app.get("/api/recipes", (req, res) => {
     if (!recipesJson) return res.status(500).json({ error: "Recipes not loaded" });
@@ -199,17 +185,20 @@ app.post( "/api/start-heating",async (req, res) => {
         res.status(500).json({error: err.message});
     }
 } );
+app.post( "/api/start-winding",async (req, res) => {
+    try {
+        await client.writeRegister(2, 1);
+        res.json({ status: "ok" });
+    } catch(err) {
+        res.status(500).json({error: err.message});
+    }
+} );
 
 app.post("/api/set-setpoint", async (req, res) => {
     const { value } = req.body;
     try {
         // если INT16
         await client.writeRegister(6, value);
-
-        // если REAL(float32):
-        // const [low, high] = floatToModbusRegisters(value);
-        // await client.writeRegisters(5, [low, high]);
-
         res.json({ status: "ok" });
     } catch (err) {
         res.status(500).json({ error: err.message });
