@@ -32,44 +32,32 @@ const filePath = path.join(__dirname, "RecipeData", "RecipeData.csv");
 
 // функция для парсинга CSV и обновления recipesJson
 function loadRecipes() {
-    fs.readFile(filePath, "utf8", (err, data) => {
-        if (err) {
-            console.error("Ошибка чтения CSV:", err);
-            return;
-        }
+    return new Promise((resolve, reject) => {
+        fs.readFile(filePath, "utf8", (err, data) => {
+            if (err) return reject(err);
 
-        parse(data, { relaxColumnCount: true }, (err, records) => {
-            if (err) {
-                console.error("Ошибка парсинга CSV:", err);
-                return;
-            }
+            parse(data, { relaxColumnCount: true }, (err, records) => {
+                if (err) return reject(err);
 
-            // фильтрация служебных строк
-            const filtered = records.filter(
-                row =>
-                    row[0] &&
-                    !row[0].startsWith("#") &&
-                    !row[0].startsWith("RecipeName:") &&
-                    !row[0].startsWith("setSize:") &&
-                    !row[0].startsWith("id:")
-            );
+                const filtered = records.filter(
+                    row =>
+                        row[0] &&
+                        !row[0].startsWith("#") &&
+                        !row[0].startsWith("RecipeName:") &&
+                        !row[0].startsWith("setSize:") &&
+                        !row[0].startsWith("id:")
+                );
 
-            if (filtered.length === 0) {
-                recipesJson = { headers: [], sets: [] };
-                return;
-            }
-
-            const headers = filtered[0];
-            const sets = filtered.slice(1).map(row => {
-                let obj = {};
-                headers.forEach((h, i) => {
-                    obj[h] = row[i];
+                const headers = filtered[0] ?? [];
+                const sets = filtered.slice(1).map(row => {
+                    const obj = {};
+                    headers.forEach((h, i) => (obj[h] = row[i]));
+                    return obj;
                 });
-                return obj;
-            });
 
-            recipesJson = { headers, sets };
-            console.log("Recipes loaded");
+                recipesJson = { headers, sets };
+                resolve(recipesJson);
+            });
         });
     });
 }
@@ -275,7 +263,7 @@ app.post("/api/login", (req, res) => {
 
 
 // Функция, которая собирает CSV обратно
-function buildCsvFile(headers, sets) {
+async function buildCsvFile(headers, sets) {
     const lines = [];
 
     // служебные строки
@@ -301,21 +289,29 @@ function buildCsvFile(headers, sets) {
 }
 
 // Маршрут для сохранения рецептов
-app.post("/api/recipes/save", (req, res) => {
-    const { headers, sets } = req.body;
+app.post("/api/recipes/save", async (req, res) => {
+    const {headers, sets, selectedSet} = req.body;
 
     if (!headers || !sets) {
-        return res.status(400).json({ error: "Invalid data" });
+        return res.status(400).json({error: "Invalid data"});
     }
 
     try {
-        const csv = buildCsvFile(headers, sets);
+        const csv = await buildCsvFile(headers, sets);
         fs.writeFileSync(filePath, csv, "utf8");
         console.log("Recipes saved");
-        res.json({ status: "ok" });
+        await loadRecipes();
+        await sendSetToPLC(selectedSet, recipesJson);
+        res.json({status: "ok"});
+
+        // res.json({
+        //     status: "ok",
+        //     setName: selectedSet,
+        //     payload: result   // ← отправляем обратно массивы
+        // });
     } catch (e) {
         console.error("Ошибка сохранения CSV:", e);
-        res.status(500).json({ error: "Failed to save CSV" });
+        res.status(500).json({error: "Failed to save CSV"});
     }
 });
 
