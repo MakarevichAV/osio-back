@@ -17,7 +17,7 @@ const io = new Server(server, {
 });
 
 const client = new ModbusRTU();
-const PLC_IP = "192.168.0.10"; // твой IP PLC
+const PLC_IP = "192.168.1.10"; // твой IP PLC
 const PORT = 502;
 
 // подключаемся к PLC
@@ -77,7 +77,7 @@ function loadRecipes() {
 // загружаем при старте сервера
 loadRecipes();
 
-// обычный REST API (чтобы можно было тестировать через браузер)
+// REST API (чтобы можно было тестировать через браузер)
 app.get("/api/holding/:start/:length", async (req, res) => {
     const { start, length } = req.params;
     try {
@@ -92,7 +92,7 @@ app.get("/api/holding/:start/:length", async (req, res) => {
 setInterval(async () => {
     try {
         // читаем первые 10 регистр
-        const data = await client.readHoldingRegisters(0, 10);
+        const data = await client.readHoldingRegisters(0, 15);
 
         // конвертируем регистры 4 и 5 в float
         // const tempSP = registersToFloat(data.data[6], data.data[7]);
@@ -144,15 +144,38 @@ async function sendSetToPLC(setName, recipeData) {
         const rpmRegisters = [];
         const idle = []
 
+        const deltaXValues = []; // для фронта
+        const angleValues = [];  // для фронта
+        const zStartValues = []; // для фронта
+        const zEndValues = [];   // для фронта
+        const rpmValues = [];    // для фронта
+
         for (const row of recipeData.sets) {
             const val = parseFloat(row[setName]) || 0;
 
-            if (row.ElementName.startsWith("Angle")) angles.push(int16ToUInt16(scaleValue(val, "Angle")));
-            else if (row.ElementName.startsWith("DeltaX")) deltaXRegisters.push(...floatToRegisters(scaleValue(val, "DeltaX")));
-            else if (row.ElementName.startsWith("Z_Start")) zStartRegisters.push(...floatToRegisters(scaleValue(val, "Z")));
-            else if (row.ElementName.startsWith("Z_End")) zEndRegisters.push(...floatToRegisters(scaleValue(val, "Z")));
-            else if (row.ElementName.startsWith("RPM")) rpmRegisters.push(...floatToRegisters(scaleValue(val, "RPM")));
-            else if (row.ElementName.startsWith("Idle")) idle.push(int16ToUInt16(scaleValue(val, "Idle")));
+            if (row.ElementName.startsWith("Angle")) {
+                angles.push(int16ToUInt16(scaleValue(val, "Angle")));
+                angleValues.push(val);
+            }
+            else if (row.ElementName.startsWith("DeltaX")) {
+                deltaXRegisters.push(...floatToRegisters(scaleValue(val, "DeltaX"))); // для ПЛК
+                deltaXValues.push(val); // для фронта
+            }
+            else if (row.ElementName.startsWith("Z_Start")) {
+                zStartRegisters.push(...floatToRegisters(scaleValue(val, "Z")));
+                zStartValues.push(val);
+            }
+            else if (row.ElementName.startsWith("Z_End")) {
+                zEndRegisters.push(...floatToRegisters(scaleValue(val, "Z")));
+                zEndValues.push(val);
+            }
+            else if (row.ElementName.startsWith("RPM")) {
+                rpmRegisters.push(...floatToRegisters(scaleValue(val, "RPM")));
+                rpmValues.push(val);
+            }
+            else if (row.ElementName.startsWith("Idle")) {
+                idle.push(int16ToUInt16(scaleValue(val, "Idle")));
+            }
         }
 
         // Запись в PLC
@@ -164,8 +187,19 @@ async function sendSetToPLC(setName, recipeData) {
         await client.writeRegisters(370, idle);            // Idle1..30 (INT16)
 
         console.log(`Set ${setName} успешно отправлен в ПЛК`);
+
+        // Возвращаем данные на фронт
+        return {
+            angleValues,
+            deltaXValues,
+            zStartValues,
+            zEndValues,
+            rpmValues,
+            idle
+        };
     } catch (err) {
         console.error("Ошибка отправки в ПЛК:", err);
+        throw err;
     }
 }
 
@@ -208,8 +242,12 @@ app.post("/api/set-setpoint", async (req, res) => {
 app.post("/api/sendSet/:setName", async (req, res) => {
     const { setName } = req.params;
     try {
-        await sendSetToPLC(setName, recipesJson); // recipesJson хранится в памяти сервера
-        res.json({ status: "ok" });
+        const result = await sendSetToPLC(setName, recipesJson); // recipesJson хранится в памяти сервера
+        res.json({
+            status: "ok",
+            setName,
+            payload: result   // ← отправляем обратно массивы
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -231,5 +269,53 @@ app.post("/api/login", (req, res) => {
         success: false,
         error: "Invalid username or password",
     });
+});
+
+
+
+
+// Функция, которая собирает CSV обратно
+function buildCsvFile(headers, sets) {
+    const lines = [];
+
+    // служебные строки
+    lines.push(`"#Delimiter:,#DecimalSymbol:."`);
+    lines.push(`"RecipeName:","Production"`);
+    lines.push(`"setSize:","${sets[0] ? Object.keys(sets[0]).length - 2 : 0}"`);
+    lines.push(`"id:","1"`);
+
+    // заголовок
+    lines.push(headers.map(h => `"${h}"`).join(","));
+
+    // наборы
+    sets.forEach(row => {
+        const arr = headers.map(h => {
+            const val = row[h] ?? "";
+            if (typeof val === "string") return `"${val}"`;
+            return val;
+        });
+        lines.push(arr.join(","));
+    });
+
+    return lines.join("\n");
+}
+
+// Маршрут для сохранения рецептов
+app.post("/api/recipes/save", (req, res) => {
+    const { headers, sets } = req.body;
+
+    if (!headers || !sets) {
+        return res.status(400).json({ error: "Invalid data" });
+    }
+
+    try {
+        const csv = buildCsvFile(headers, sets);
+        fs.writeFileSync(filePath, csv, "utf8");
+        console.log("Recipes saved");
+        res.json({ status: "ok" });
+    } catch (e) {
+        console.error("Ошибка сохранения CSV:", e);
+        res.status(500).json({ error: "Failed to save CSV" });
+    }
 });
 
